@@ -1,7 +1,6 @@
 package scsu
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -34,10 +33,10 @@ type SingleRuneSource rune
 // RuneSlice is a RuneSource backed by []rune.
 type RuneSlice []rune
 
-type Encoder struct {
+type encoder struct {
 	scsu
-	wr      io.Writer
-	out     []byte // a short buffer so that we can go back and replace SCU to SQU
+	wr      io.Writer // nil when encoding into a slice
+	out     []byte    // a buffer so that we can go back and replace SCU to SQU. In streaming mode does not need more than 5 bytes
 	written int
 
 	src     RuneSource
@@ -46,8 +45,17 @@ type Encoder struct {
 	nextPos int
 	scuPos  int
 
-	nextWindow  int
-	unicodeMode bool
+	nextWindow int
+}
+
+// Encoder can be used to encode a string into []byte.
+// Zero value is ready to use.
+type Encoder struct {
+	encoder
+}
+
+type Writer struct {
+	encoder
 }
 
 var (
@@ -87,20 +95,20 @@ func (r SingleRuneSource) RuneAt(pos int) (rune, int, error) {
 	return 0, 0, io.EOF
 }
 
-func NewEncoder(wr io.Writer) *Encoder {
-	e := new(Encoder)
+func NewWriter(wr io.Writer) *Writer {
+	e := new(Writer)
 	e.wr = wr
 	e.init()
 	return e
 }
 
-func (e *Encoder) init() {
+func (e *encoder) init() {
 	e.scsu.init()
 	e.nextWindow = 3
 	e.scuPos = -1
 }
 
-func (e *Encoder) nextRune() {
+func (e *encoder) nextRune() {
 	e.curRune, e.nextPos, e.curErr = e.src.RuneAt(e.nextPos)
 }
 
@@ -108,7 +116,7 @@ func (e *Encoder) nextRune() {
   @param ch - character
   @param offsetTable - table of window offsets
   @return true if the character fits a window from the table of windows */
-func (e *Encoder) locateWindow(ch rune, offsetTable []int32) bool {
+func (e *encoder) locateWindow(ch rune, offsetTable []int32) bool {
 	// always try the current window first
 	// if the character fits the current window
 	// just use the current window
@@ -141,7 +149,7 @@ func isAsciiCrLfOrTab(ch rune) bool {
     of characters fitting the current window are output as runs of bytes
     in the range 0x80-0xFF.
 **/
-func (e *Encoder) outputSingleByteRun() error {
+func (e *encoder) outputSingleByteRun() error {
 	win := e.window
 	for e.curErr == nil {
 		ch := e.curRune
@@ -177,7 +185,7 @@ func (e *Encoder) outputSingleByteRun() error {
   When quoting a character from a dynamic window use 0x80 - 0xFF, when
   quoting a character from a static window use 0x00-0x7f.
   **/
-func (e *Encoder) quoteSingleByte(ch rune) error {
+func (e *encoder) quoteSingleByte(ch rune) error {
 	// Output command byte followed by...
 	e.out = append(e.out, byte(SQ0+e.window))
 	if offset := e.dynamicOffset[e.window]; ch >= offset && ch < offset+0x80 {
@@ -205,7 +213,7 @@ func (e *Encoder) quoteSingleByte(ch rune) error {
   of any other characters. Characters in the range 0xE00-0xF2FF must
   be quoted to avoid overlap with the Unicode mode compression command codes.
   **/
-func (e *Encoder) outputUnicodeRun() (err error) {
+func (e *encoder) outputUnicodeRun() (err error) {
 	for e.curErr == nil {
 		r, n := e.curRune, e.nextPos
 		var r1 rune
@@ -267,7 +275,7 @@ func (e *Encoder) outputUnicodeRun() (err error) {
 }
 
 // redefine a window so it surrounds a given character value
-func (e *Encoder) positionWindow(ch rune, fUnicodeMode bool) bool {
+func (e *encoder) positionWindow(ch rune, fUnicodeMode bool) bool {
 	iWin := e.nextWindow % 8 // simple LRU
 	var iPosition uint16
 
@@ -335,7 +343,7 @@ func (e *Encoder) positionWindow(ch rune, fUnicodeMode bool) bool {
 }
 
 // Note, e.curRune must be compressible
-func (e *Encoder) chooseWindow() error {
+func (e *encoder) chooseWindow() error {
 	curCh, nextPos := e.curRune, e.nextPos
 	var err error
 
@@ -374,7 +382,7 @@ func (e *Encoder) chooseWindow() error {
 	prevWindow := e.window
 
 	// try to locate a dynamic window
-	if windowDecider < 0x80 || e.locateWindow(windowDecider, e.dynamicOffset) {
+	if windowDecider < 0x80 || e.locateWindow(windowDecider, e.dynamicOffset[:]) {
 		// lookahead to use SQn instead of SCn for single
 		// character interruptions of runs in current window
 		if !e.unicodeMode {
@@ -404,7 +412,7 @@ func (e *Encoder) chooseWindow() error {
 		return nil
 	} else
 	// try to locate a static window
-	if !e.unicodeMode && e.locateWindow(windowDecider, staticOffset) {
+	if !e.unicodeMode && e.locateWindow(windowDecider, staticOffset[:]) {
 		// static windows are not accessible from Unicode mode
 		err = e.quoteSingleByte(curCh)
 		if err != nil {
@@ -421,9 +429,7 @@ func (e *Encoder) chooseWindow() error {
 	return errors.New("could not select window. Internal Compressor Error")
 }
 
-// Encode the given RuneSource. Returns the total number of bytes written
-// into the Encoder's writer and an error (if any).
-func (e *Encoder) Encode(src RuneSource) (int, error) {
+func (e *encoder) encode(src RuneSource) error {
 	var err error
 	e.src, e.written, e.nextPos = src, 0, 0
 	e.nextRune()
@@ -482,25 +488,30 @@ func (e *Encoder) Encode(src RuneSource) (int, error) {
 
 	e.src = nil // do not hold the reference
 
-	return e.written, err
+	return err
 }
 
 // WriteString encodes the given string and writes the binary representation
-// into the Encoder's writer. Invalid UTF-8 sequences are replaced with utf8.RuneError.
+// into the writer. Invalid UTF-8 sequences are replaced with utf8.RuneError.
 // Returns the number of bytes written and an error (if any).
-func (e *Encoder) WriteString(in string) (int, error) {
-	return e.Encode(StringRuneSource(in))
+func (w *Writer) WriteString(in string) (int, error) {
+	return w.WriteRunes(StringRuneSource(in))
 }
 
 // WriteRune encodes the given rune and writes the binary representation
-// into the Encoder's writer.
+// into the writer.
 // Returns the number of bytes written and an error (if any).
-func (e *Encoder) WriteRune(r rune) (int, error) {
-	return e.Encode(SingleRuneSource(r))
+func (w *Writer) WriteRune(r rune) (int, error) {
+	return w.WriteRunes(SingleRuneSource(r))
 }
 
-func (e *Encoder) flush() error {
-	if len(e.out) > 0 {
+func (w *Writer) WriteRunes(src RuneSource) (int, error) {
+	err := w.encode(src)
+	return w.written, err
+}
+
+func (e *encoder) flush() error {
+	if e.wr != nil && len(e.out) > 0 {
 		n, err := e.wr.Write(e.out)
 		e.written += n
 		e.out = e.out[:0]
@@ -512,32 +523,37 @@ func (e *Encoder) flush() error {
 
 // Reset discards the encoder's state and makes it equivalent to the result of NewEncoder
 // called with w allowing to re-use the instance.
-func (e *Encoder) Reset(w io.Writer) {
-	e.wr = w
-	e.unicodeMode = false
-	e.out = e.out[:0]
+func (w *Writer) Reset(out io.Writer) {
+	w.wr = out
+	w.out = w.out[:0]
+	w.reset()
+	w.init()
+}
+
+// Encode the given RuneSource and append to dst. If dst does not have enough capacity
+// it will be re-allocated. It can be nil.
+// Not goroutine-safe. The instance can be re-used after.
+func (e *Encoder) Encode(src RuneSource, dst []byte) ([]byte, error) {
+	e.reset()
 	e.init()
+	e.out = dst
+	err := e.encode(src)
+	out := e.out
+	e.out = nil
+	return out, err
 }
 
 // Encode src and append to dst. If dst does not have enough capacity
 // it will be re-allocated. It can be nil.
 func Encode(src string, dst []byte) ([]byte, error) {
-	b := bytes.NewBuffer(dst)
-	_, err := NewEncoder(b).WriteString(src)
-	if err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
+	var e Encoder
+	return e.Encode(StringRuneSource(src), dst)
 }
 
 // EncodeStrict is the same as Encode, however it stops and returns ErrInvalidUTF8
 // if an invalid UTF-8 sequence is encountered rather than replacing it with
 // utf8.RuneError.
 func EncodeStrict(src string, dst []byte) ([]byte, error) {
-	b := bytes.NewBuffer(dst)
-	_, err := NewEncoder(b).Encode(StrictStringRuneSource(src))
-	if err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
+	var e Encoder
+	return e.Encode(StrictStringRuneSource(src), dst)
 }

@@ -12,7 +12,7 @@ const (
 
 func TestWriteString(t *testing.T) {
 	var b bytes.Buffer
-	e := NewEncoder(&b)
+	e := NewWriter(&b)
 	n, err := e.WriteString("Москва")
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestWriteString(t *testing.T) {
 
 func TestWriteRune(t *testing.T) {
 	var b bytes.Buffer
-	e := NewEncoder(&b)
+	e := NewWriter(&b)
 	n, err := e.WriteRune('\u041C')
 	if err != nil {
 		t.Fatal(err)
@@ -42,8 +42,8 @@ func TestWriteRune(t *testing.T) {
 
 func TestEncodeRuneSlice(t *testing.T) {
 	var b bytes.Buffer
-	e := NewEncoder(&b)
-	n, err := e.Encode(RuneSlice([]rune("Москва")))
+	e := NewWriter(&b)
+	n, err := e.WriteRunes(RuneSlice([]rune("Москва")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestEncodeNilDst(t *testing.T) {
 
 func TestReferenceString(t *testing.T) {
 	var b bytes.Buffer
-	e := NewEncoder(&b)
+	e := NewWriter(&b)
 	n, err := e.WriteString(referenceString)
 	if err != nil {
 		t.Fatal(err)
@@ -167,10 +167,43 @@ func TestEncodeDecode(t *testing.T) {
 	}
 }
 
+func TestEncoderReuse(t *testing.T) {
+	var e Encoder
+	s := StringRuneSource("á山тест")
+	buf, err := e.Encode(s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf1, err := e.Encode(s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(buf, buf1) {
+		t.Fatalf("buffers are not equal: %v, %v", buf, buf1)
+	}
+
+	buf = buf[:cap(buf)]
+	buf1 = buf1[:cap(buf1)]
+	if &buf[cap(buf)-1] == &buf1[cap(buf1)-1] {
+		t.Fatal("Buffers are the same")
+	}
+}
+
 func BenchmarkEncode(b *testing.B) {
+	b.ReportAllocs()
 	var buf []byte
 	for i := 0; i < b.N; i++ {
 		buf, _ = Encode(referenceString, buf)
+		buf = buf[:0]
+	}
+}
+
+func BenchmarkEncodeZeroAlloc(b *testing.B) {
+	var e Encoder
+	var buf []byte
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf, _ = e.Encode(StringRuneSource(referenceString), buf)
 		buf = buf[:0]
 	}
 }

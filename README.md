@@ -33,17 +33,24 @@ Decode a []byte into a string:
 s, err := scsu.Decode(b)
 ```
 
-Use an Encoder:
+Use a Writer:
 ```go
-encoder := scsu.NewEncoder(writer)
-n, err := encoder.WriteString(s)
-n, err = encoder.WriteRune(r)
-n, err = encoder.Encode(runeSource)
+writer := scsu.NewWriter(outWriter)
+n, err := writer.WriteString(s)
+n, err = writer.WriteRune(r)
+n, err = writer.WriteRunes(runeSource)
 ```
 
-Use a Decoder:
+Use an Encoder:
 ```go
-decoder := scsu.NewDecoder(byteReader)
-s, err := decoder.ReadString() // read the entire string
-r, size, err := decoder.ReadRune() // or a single rune
+encoder := scsu.NewEncoder()
+buf, err := encoder.Encode(runeSource, buf) // assuming buf has enough capacity this does zero allocs
+// encoder then can be re-used
+```
+
+Use a Reader:
+```go
+reader := scsu.NewReader(byteReader)
+s, err := reader.ReadString() // read the entire string
+r, size, err := reader.ReadRune() // or a single rune
 ```

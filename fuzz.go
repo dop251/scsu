@@ -10,13 +10,13 @@ import (
 
 func Fuzz(data []byte) int {
 	var b bytes.Buffer
-	e := NewEncoder(&b)
+	e := NewWriter(&b)
 	s := string(data)
-	_, err := e.Encode(StrictStringRuneSource(s))
+	_, err := e.WriteRunes(StrictStringRuneSource(s))
 	validUTF := true
 	if err == nil {
 		b1 := bytes.NewBuffer(b.Bytes())
-		d := NewDecoder(b1)
+		d := NewReader(b1)
 		s1, err := d.ReadString()
 		if err != nil {
 			panic(err)

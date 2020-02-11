@@ -24,7 +24,7 @@ var (
 
 func TestDecode(t *testing.T) {
 	r := bytes.NewBuffer([]byte{0x12, 0x9C, 0xBE, 0xC1, 0xBA, 0xB2, 0xB0})
-	d := NewDecoder(r)
+	d := NewReader(r)
 	s, err := d.ReadString()
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestDecode(t *testing.T) {
 
 func TestReadRune(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{0x12, 0x9C, 0xBE, 0xC1, 0xBA, 0xB2, 0xB0})
-	d := NewDecoder(buf)
+	d := NewReader(buf)
 	r, n, err := d.ReadRune()
 	if err != nil {
 		t.Fatal(err)
@@ -55,9 +55,21 @@ func TestReadRune(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("Unexpected size: %d", n)
 	}
+
+	r, n, err = d.ReadRune()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r != '\u043E' {
+		t.Fatalf("Unexpected rune: %c", r)
+	}
+	if n != 1 {
+		t.Fatalf("Unexpected size: %d", n)
+	}
 }
 
 func BenchmarkDecode(b *testing.B) {
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = Decode(refEncoded)
 	}

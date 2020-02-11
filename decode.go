@@ -9,30 +9,28 @@ import (
 	"unicode/utf16"
 )
 
-type Decoder struct {
+type Reader struct {
 	scsu
 	brd       io.ByteReader
 	bytesRead int
-
-	unicodeMode bool
 }
 
 var (
 	ErrIllegalInput = errors.New("illegal input")
 )
 
-func NewDecoder(r io.ByteReader) *Decoder {
-	d := &Decoder{
+func NewReader(r io.ByteReader) *Reader {
+	d := &Reader{
 		brd: r,
 	}
 	d.init()
 	return d
 }
 
-func (d *Decoder) readByte() (byte, error) {
-	b, err := d.brd.ReadByte()
+func (r *Reader) readByte() (byte, error) {
+	b, err := r.brd.ReadByte()
 	if err == nil {
-		d.bytesRead++
+		r.bytesRead++
 	}
 	return b, err
 }
@@ -59,23 +57,23 @@ func (d *Decoder) readByte() (byte, error) {
 
   Recall that all Windows are of the same length (128 code positions).
 */
-func (d *Decoder) defineWindow(iWindow int, offset byte) error {
+func (r *Reader) defineWindow(iWindow int, offset byte) error {
 	// 0 is a reserved value
 	if offset == 0 {
 		return ErrIllegalInput
 	}
 	if offset < gapThreshold {
-		d.dynamicOffset[iWindow] = int32(offset) << 7
+		r.dynamicOffset[iWindow] = int32(offset) << 7
 	} else if offset < reservedStart {
-		d.dynamicOffset[iWindow] = (int32(offset) << 7) + gapOffset
+		r.dynamicOffset[iWindow] = (int32(offset) << 7) + gapOffset
 	} else if offset < fixedThreshold {
 		return fmt.Errorf("offset = %d", offset)
 	} else {
-		d.dynamicOffset[iWindow] = fixedOffset[offset-fixedThreshold]
+		r.dynamicOffset[iWindow] = fixedOffset[offset-fixedThreshold]
 	}
 
 	// make the redefined window the active one
-	d.window = iWindow
+	r.window = iWindow
 	return nil
 }
 
@@ -102,15 +100,15 @@ func (d *Decoder) defineWindow(iWindow int, offset byte) error {
   The bottom 13 bits of chOffset are used to calculate the offset relative to
   a 7 bit input data byte to yield the 20 bits expressed by each surrogate pair.
   **/
-func (d *Decoder) defineExtendedWindow(chOffset uint16) {
+func (r *Reader) defineExtendedWindow(chOffset uint16) {
 	// The top 3 bits of iOffsetHi are the window index
 	window := chOffset >> 13
 
 	// Calculate the new offset
-	d.dynamicOffset[window] = ((int32(chOffset) & 0x1FFF) << 7) + (1 << 16)
+	r.dynamicOffset[window] = ((int32(chOffset) & 0x1FFF) << 7) + (1 << 16)
 
 	// make the redefined window the active one
-	d.window = int(window)
+	r.window = int(window)
 }
 
 // convert an io.EOF into io.ErrUnexpectedEOF
@@ -122,48 +120,48 @@ func unexpectedEOF(e error) error {
 	return e
 }
 
-func (d *Decoder) expandUnicode() (rune, error) {
+func (r *Reader) expandUnicode() (rune, error) {
 	for {
-		b, err := d.readByte()
+		b, err := r.readByte()
 		if err != nil {
 			return 0, err
 		}
 		if b >= UC0 && b <= UC7 {
-			d.window = int(b) - UC0
-			d.unicodeMode = false
+			r.window = int(b) - UC0
+			r.unicodeMode = false
 			return -1, nil
 		}
 		if b >= UD0 && b <= UD7 {
-			b1, err := d.readByte()
+			b1, err := r.readByte()
 			if err != nil {
 				return 0, unexpectedEOF(err)
 			}
-			d.unicodeMode = false
-			return -1, d.defineWindow(int(b)-UD0, b1)
+			r.unicodeMode = false
+			return -1, r.defineWindow(int(b)-UD0, b1)
 		}
 		if b == UDX {
-			c, err := d.readUint16()
+			c, err := r.readUint16()
 			if err != nil {
 				return 0, unexpectedEOF(err)
 			}
-			d.defineExtendedWindow(c)
-			d.unicodeMode = false
+			r.defineExtendedWindow(c)
+			r.unicodeMode = false
 			return -1, nil
 		}
 		if b == UQU {
-			r, err := d.readUint16()
+			r, err := r.readUint16()
 			if err != nil {
 				return 0, err
 			}
 			return rune(r), nil
 		} else {
-			b1, err := d.readByte()
+			b1, err := r.readByte()
 			if err != nil {
 				return 0, unexpectedEOF(err)
 			}
 			ch := rune(uint16FromTwoBytes(b, b1))
 			if utf16.IsSurrogate(ch) {
-				ch1, err := d.readUint16()
+				ch1, err := r.readUint16()
 				if err != nil {
 					return 0, unexpectedEOF(err)
 				}
@@ -178,12 +176,12 @@ func (d *Decoder) expandUnicode() (rune, error) {
 	}
 }
 
-func (d *Decoder) readUint16() (uint16, error) {
-	b1, err := d.readByte()
+func (r *Reader) readUint16() (uint16, error) {
+	b1, err := r.readByte()
 	if err != nil {
 		return 0, unexpectedEOF(err)
 	}
-	b2, err := d.readByte()
+	b2, err := r.readByte()
 	if err != nil {
 		return 0, unexpectedEOF(err)
 	}
@@ -195,21 +193,21 @@ func uint16FromTwoBytes(hi, lo byte) uint16 {
 }
 
 /** expand portion of the input that is in single byte mode **/
-func (d *Decoder) expandSingleByte() (rune, error) {
+func (r *Reader) expandSingleByte() (rune, error) {
 	for {
-		b, err := d.readByte()
+		b, err := r.readByte()
 		if err != nil {
 			return 0, err
 		}
 		staticWindow := 0
-		dynamicWindow := d.window
+		dynamicWindow := r.window
 
 		switch b {
 		case SQ0, SQ1, SQ2, SQ3, SQ4, SQ5, SQ6, SQ7:
 			// Select window pair to quote from
 			dynamicWindow = int(b) - SQ0
 			staticWindow = dynamicWindow
-			b, err = d.readByte()
+			b, err = r.readByte()
 			if err != nil {
 				return 0, unexpectedEOF(err)
 			}
@@ -221,36 +219,36 @@ func (d *Decoder) expandSingleByte() (rune, error) {
 				return int32(b) + staticOffset[staticWindow], nil
 			} else {
 				ch := int32(b) - 0x80
-				ch += d.dynamicOffset[dynamicWindow]
+				ch += r.dynamicOffset[dynamicWindow]
 				return ch, nil
 			}
 		case SDX:
 			// define a dynamic window as extended
-			ch, err := d.readUint16()
+			ch, err := r.readUint16()
 			if err != nil {
 				return 0, unexpectedEOF(err)
 			}
-			d.defineExtendedWindow(ch)
+			r.defineExtendedWindow(ch)
 		case SD0, SD1, SD2, SD3, SD4, SD5, SD6, SD7:
 			// Position a dynamic Window
-			b1, err := d.readByte()
+			b1, err := r.readByte()
 			if err != nil {
 				return 0, unexpectedEOF(err)
 			}
-			err = d.defineWindow(int(b)-SD0, b1)
+			err = r.defineWindow(int(b)-SD0, b1)
 			if err != nil {
 				return 0, err
 			}
 		case SC0, SC1, SC2, SC3, SC4, SC5, SC6, SC7:
 			// Select a new dynamic Window
-			d.window = int(b) - SC0
+			r.window = int(b) - SC0
 		case SCU:
 			// switch to Unicode mode and continue parsing
-			d.unicodeMode = true
+			r.unicodeMode = true
 			return -1, nil
 		case SQU:
 			// directly extract one Unicode character
-			ch, err := d.readUint16()
+			ch, err := r.readUint16()
 			if err != nil {
 				return 0, err
 			}
@@ -261,41 +259,43 @@ func (d *Decoder) expandSingleByte() (rune, error) {
 	}
 }
 
-func (d *Decoder) readRune() (rune, error) {
+func (r *Reader) readRune() (rune, error) {
 	for {
-		var r rune
+		var c rune
 		var err error
-		if d.unicodeMode {
-			r, err = d.expandUnicode()
+		if r.unicodeMode {
+			c, err = r.expandUnicode()
 		} else {
-			r, err = d.expandSingleByte()
+			c, err = r.expandSingleByte()
 		}
 		if err != nil {
 			return 0, err
 		}
-		if r == -1 {
+		if c == -1 {
 			continue
 		}
-		return r, nil
+		return c, nil
 	}
 }
 
 // ReadRune reads a single SCSU encoded Unicode character
 // and returns the rune and the amount of bytes consumed. If no character is
 // available, err will be set.
-func (d *Decoder) ReadRune() (rune, int, error) {
-	pr := d.bytesRead
-	r, err := d.readRune()
-	return r, d.bytesRead - pr, err
+func (r *Reader) ReadRune() (rune, int, error) {
+	pr := r.bytesRead
+	c, err := r.readRune()
+	return c, r.bytesRead - pr, err
 }
 
-// ReadString reads all available input as a string.
-// It keeps reading the source reader until it returns io.EOF or an error occurs.
-// In case of io.EOF the error returned by ReadString will be nil.
-func (d *Decoder) ReadString() (string, error) {
+// ReadStringSizeHint is like ReadString, but takes a hint about the expected string size.
+// Note this is the size of the UTF-8 encoded string in bytes.
+func (r *Reader) ReadStringSizeHint(sizeHint int) (string, error) {
 	var sb strings.Builder
+	if sizeHint > 0 {
+		sb.Grow(sizeHint)
+	}
 	for {
-		r, err := d.readRune()
+		r, err := r.readRune()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -307,7 +307,20 @@ func (d *Decoder) ReadString() (string, error) {
 	return sb.String(), nil
 }
 
+// ReadString reads all available input as a string.
+// It keeps reading the source reader until it returns io.EOF or an error occurs.
+// In case of io.EOF the error returned by ReadString will be nil.
+func (r *Reader) ReadString() (string, error) {
+	return r.ReadStringSizeHint(0)
+}
+
+func (r *Reader) Reset(rd io.ByteReader) {
+	r.brd, r.bytesRead = rd, 0
+	r.reset()
+	r.init()
+}
+
 // Decode a byte array as a string.
 func Decode(b []byte) (string, error) {
-	return NewDecoder(bytes.NewBuffer(b)).ReadString()
+	return NewReader(bytes.NewBuffer(b)).ReadStringSizeHint(len(b))
 }

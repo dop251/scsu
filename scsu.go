@@ -69,7 +69,7 @@ const (
 
 var (
 	/** constant offsets for the 8 static windows */
-	staticOffset = []int32{
+	staticOffset = [...]int32{
 		0x0000, // ASCII for quoted tags
 		0x0080, // Latin - 1 Supplement (for access to punctuation)
 		0x0100, // Latin Extended-A
@@ -81,7 +81,7 @@ var (
 	}
 
 	/** initial offsets for the 8 dynamic (sliding) windows */
-	initialDynamicOffset = []int32{
+	initialDynamicOffset = [...]int32{
 		0x0080, // Latin-1
 		0x00C0, // Latin Extended A   //@005 fixed from 0x0100
 		0x0400, // Cyrillic
@@ -114,7 +114,7 @@ const (
 
 var (
 	/** Table of fixed predefined Offsets, and byte values that index into  **/
-	fixedOffset = []int32{
+	fixedOffset = [...]int32{
 		/* 0xF9 */ 0x00C0, // Latin-1 Letters + half of Latin Extended A
 		/* 0xFA */ 0x0250, // IPA extensions
 		/* 0xFB */ 0x0370, // Greek
@@ -127,7 +127,8 @@ var (
 
 type scsu struct {
 	window        int // current active window
-	dynamicOffset []int32
+	unicodeMode   bool
+	dynamicOffset [8]int32
 }
 
 /** whether a character is compressible */
@@ -136,8 +137,10 @@ func isCompressible(ch rune) bool {
 }
 
 func (scsu *scsu) init() {
-	if len(scsu.dynamicOffset) != len(initialDynamicOffset) {
-		scsu.dynamicOffset = make([]int32, len(initialDynamicOffset))
-	}
-	copy(scsu.dynamicOffset, initialDynamicOffset)
+	scsu.dynamicOffset = initialDynamicOffset
+}
+
+func (scsu *scsu) reset() {
+	scsu.window = 0
+	scsu.unicodeMode = false
 }
