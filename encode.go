@@ -262,7 +262,7 @@ func (e *encoder) outputUnicodeRun() (err error) {
 			e.nextRune()
 		}
 
-		if len(e.out) > 3 {
+		if len(e.out)-e.scuPos > 3 {
 			err = e.flush()
 			e.scuPos = -1
 			if err != nil {
