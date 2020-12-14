@@ -1,0 +1,58 @@
+name: Go
+
+on: [push, pull_request]
+
+jobs:
+
+  test:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.13.15', '1.14.7', '1.15']
+        include:
+          - os: ubuntu-latest
+            fuzzing: true
+      fail-fast: false
+    env:
+      OS: ${{ matrix.os }}
+      GO: ${{ matrix.go }}
+    steps:
+      - if: startsWith(matrix.os, 'macos')
+        run: brew update
+
+      - uses: actions/setup-go@v2
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Add $GOPATH/bin to $PATH
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v2
+
+      - name: Build
+        run: go build
+
+      - name: Test
+        run: go test
+
+      - name: Get Fuzzing Tools
+        if: matrix.fuzzing
+        run: |
+          go get github.com/dvyukov/go-fuzz/go-fuzz github.com/dvyukov/go-fuzz/go-fuzz-build
+
+      - name: Test Fuzzing
+        if: matrix.fuzzing
+        run: |
+          which timeout
+          which go-fuzz-build
+          which go-fuzz
+          go-fuzz-build -o=./fuzz.zip
+          # Fuzzing 30 seconds
+          bash -c '(timeout 30 go-fuzz -bin=./fuzz.zip -workdir=./workdir; ret=$?; echo timeout ret=$ret; (( ret == 124 )) && ret=0; exit $ret)'
