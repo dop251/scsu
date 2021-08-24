@@ -1,3 +1,3 @@
 module github.com/dop251/scsu
 
-go 1.15
+go 1.13
