@@ -147,6 +147,10 @@ func TestEncodeDecode(t *testing.T) {
 		"山自作久筋出難具固馬記式点連類無書着",
 		"\U0003f02c𬀀\U0002f03f𭀀\U0002f080\U0001403f𮀿",
 		"翫�000",
+		// This overrides window 0 with an extended range window which triggers a bug in the original implementation
+		// (can't use iPosition < 0x100 as a reliable check for a non-extended range)
+		"\U0001bef1𛱱\U0001cc71\U0001cff1\U0001baf1" +
+			"𗿱",
 	} {
 		s := s
 		t.Run("", func(t *testing.T) {
