@@ -557,3 +557,14 @@ func EncodeStrict(src string, dst []byte) ([]byte, error) {
 	var e Encoder
 	return e.Encode(StrictStringRuneSource(src), dst)
 }
+
+// FindFirstEncodable returns the position of the first byte that is not pass-through.
+// Returns -1 if the entire string is pass-through (i.e. encoding it would return the string unchanged).
+func FindFirstEncodable(src string) int {
+	for i := 0; i < len(src); i++ {
+		if !isAsciiCrLfOrTab(rune(src[i])) {
+			return i
+		}
+	}
+	return -1
+}

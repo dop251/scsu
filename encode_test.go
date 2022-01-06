@@ -3,6 +3,7 @@ package scsu
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -191,6 +192,30 @@ func TestEncoderReuse(t *testing.T) {
 	if &buf[cap(buf)-1] == &buf1[cap(buf1)-1] {
 		t.Fatal("Buffers are the same")
 	}
+}
+
+func ExampleFindFirstEncodable() {
+	encodeOrPassthrough := func(s string) ([]byte, error) {
+		pos := FindFirstEncodable(s)
+		if pos >= 0 {
+			buf := make([]byte, pos, len(s))
+			// First, copy the pass-through part
+			copy(buf, s)
+			// ... then append the encoded tail.
+			buf, err := Encode(s[pos:], buf)
+			if err != nil {
+				return nil, err
+			}
+			return buf, nil
+		}
+		// The string only contains pass-through characters, save buffer allocation.
+		// The caller can check if the returned []byte is nil and use the original string instead.
+		return nil, nil
+	}
+	fmt.Println(encodeOrPassthrough("Sample ASCII"))
+	fmt.Println(encodeOrPassthrough("Sample Unicode 😀"))
+	// Output: [] <nil>
+	// [83 97 109 112 108 101 32 85 110 105 99 111 100 101 32 11 97 236 128] <nil>
 }
 
 func BenchmarkEncode(b *testing.B) {
